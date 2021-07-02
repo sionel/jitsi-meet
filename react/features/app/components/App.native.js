@@ -1,229 +1,265 @@
-// @flow
-
-import React from 'react';
+import React, {PureComponent} from 'react';
 import SplashScreen from 'react-native-splash-screen';
+import {AppRegistry, NativeEventEmitter, NativeModules} from 'react-native';
 
-import { setColorScheme } from '../../base/color-scheme';
-import { DialogContainer } from '../../base/dialog';
-import { updateFlags } from '../../base/flags/actions';
-import { CALL_INTEGRATION_ENABLED, SERVER_URL_CHANGE_ENABLED } from '../../base/flags/constants';
-import { getFeatureFlag } from '../../base/flags/functions';
-import { Platform } from '../../base/react';
-import { DimensionsDetector, clientResized } from '../../base/responsive-ui';
-import { updateSettings } from '../../base/settings';
-import JitsiThemePaperProvider from '../../base/ui/components/JitsiThemeProvider.native';
-import logger from '../logger';
+// import JitsiMeetJS, {JitsiConnectionEvents} from './lib-jitsi-meet';
+import JitsiMeetJS, {JitsiConnectionEvents} from '../../base/lib-jitsi-meet';
 
-import { AbstractApp } from './AbstractApp';
-import type { Props as AbstractAppProps } from './AbstractApp';
+import {Text, View, Button, TextInput, SafeAreaView} from 'react-native';
+import {RTCView} from 'react-native-webrtc';
 
-// Register middlewares and reducers.
-import '../middlewares';
-import '../reducers';
+const {ExternalAPI} = NativeModules;
+// debugger
+const eventEmitter = new NativeEventEmitter(ExternalAPI);
 
-declare var __DEV__;
+const config = {
+  hosts: {
+    domain: 'meet.jit.si',
+    focus: 'focus.meet.jit.si',
+    muc: 'conference.meet.jit.si'
+  },
 
-/**
- * The type of React {@code Component} props of {@link App}.
- */
-type Props = AbstractAppProps & {
+  bosh: 'https://meet.jit.si/http-bind',
+  openBridgeChannel: 'datachannel',
+  channelLastN: -1,
+  resolution: 720,
+  constraints: {
+    video: {
+      aspectRatio: 1.3,
+      height: {
+        ideal: 320,
+        max: 720,
+        min: 240
+      },
+      width: {min: 640, max: 1280}
+    }
+  },
+  disableSuspendVideo: true,
+  disableSimulcast: false,
+  minHDHeight: 240,
+  p2p: {
+    enabled: true,
 
-    /**
-     * An object of colors that override the default colors of the app/sdk.
-     */
-    colorScheme: ?Object,
+    stunServers: [{urls: 'stun:meet-jit-si-turnrelay.jitsi.net:443'}]
+  },
 
-    /**
-     * Identifier for this app on the native side.
-     */
-    externalAPIScope: string,
+  stereo: true,
+  e2eping: {pingInterval: 10000, analyticsInterval: 60000},
+  desktopSharing: 'ext',
+  desktopSharingSources: ['screen', 'window'],
 
-    /**
-     * An object with the feature flags.
-     */
-    flags: Object,
+  enableNoAudioDetection: true,
+  enableNoisyMicDetection: true,
 
-    /**
-     * An object with user information (display name, email, avatar URL).
-     */
-    userInfo: ?Object
+  channelLastN: -1,
+  enableWelcomePage: true
 };
 
-/**
- * Root app {@code Component} on mobile/React Native.
- *
- * @extends AbstractApp
- */
-export class App extends AbstractApp {
-    _init: Promise<*>;
+export class App extends PureComponent {
+  constructor(props) {
+    super(props);
+    this._jitsiConference;
+    this._jitsiConnection;
+    this.state = {
+      tracks: [],
+      roomName: 'test_choidkanehahtdhrpwjrdma',
+      num: 0,
+      localTracks: null
+    };
+    this.externalAPIScope = props.externalAPIScope;
+    SplashScreen.hide();
+  }
 
-    /**
-     * Initializes a new {@code App} instance.
-     *
-     * @param {Props} props - The read-only React {@code Component} props with
-     * which the new instance is to be initialized.
-     */
-    constructor(props: Props) {
-        super(props);
+  componentWillUnmount() {
+    this._jitsiConnection?.disconnect();
+    this._jitsiConference?.leave();
+  }
 
-        // In the Release configuration, React Native will (intentionally) throw
-        // an unhandled JavascriptException for an unhandled JavaScript error.
-        // This will effectively kill the app. In accord with the Web, do not
-        // kill the app.
-        this._maybeDisableExceptionsManager();
+  _joinUser = () => {};
+  _addRemoteTrack = track => {
+    if (track.getType() === 'video') {
+      let exist = false;
+      let newTrack = [];
 
-        // Bind event handler so it is only bound once per instance.
-        this._onDimensionsChanged = this._onDimensionsChanged.bind(this);
-    }
+      this.state.tracks.forEach(e => {
+        if (e.user === track.ownerEndpointId) {
+          e.video = track;
+          exist = true;
+        }
+        newTrack.push(e);
+      });
 
-    /**
-     * Initializes the color scheme.
-     *
-     * @inheritdoc
-     *
-     * @returns {void}
-     */
-    componentDidMount() {
-        super.componentDidMount();
-
-        SplashScreen.hide();
-
-        this._init.then(() => {
-            const { dispatch, getState } = this.state.store;
-
-            // We set these early enough so then we avoid any unnecessary re-renders.
-            dispatch(setColorScheme(this.props.colorScheme));
-            dispatch(updateFlags(this.props.flags));
-
-            // Check if serverURL is configured externally and not allowed to change.
-            const serverURLChangeEnabled = getFeatureFlag(getState(), SERVER_URL_CHANGE_ENABLED, true);
-
-            if (!serverURLChangeEnabled) {
-                // As serverURL is provided externally, so we push it to settings.
-                if (typeof this.props.url !== 'undefined') {
-                    const { serverURL } = this.props.url;
-
-                    if (typeof serverURL !== 'undefined') {
-                        dispatch(updateSettings({ serverURL }));
-                    }
-                }
-            }
-
-            dispatch(updateSettings(this.props.userInfo || {}));
-
-            // Update settings with feature-flag.
-            const callIntegrationEnabled = this.props.flags[CALL_INTEGRATION_ENABLED];
-
-            if (typeof callIntegrationEnabled !== 'undefined') {
-                dispatch(updateSettings({ disableCallIntegration: !callIntegrationEnabled }));
-            }
+      if (exist) {
+        this.setState({
+          ...this.state,
+          tracks: [...newTrack]
         });
+      } else {
+        this.setState({
+          ...this.state,
+          tracks: [
+            ...this.state.tracks,
+            {video: track, user: track.ownerEndpointId}
+          ]
+        });
+      }
     }
+  };
+  _changeRoomName = text => {
+    this.setState({
+      ...this.state,
+      roomName: text
+    });
+  };
+  _disconnMeet = async () => {
+    this._jitsiConference?.getConnectionState()
+      ? await this._jitsiConference?.leave()
+      : null;
+    this._jitsiConference = null;
+    await this._jitsiConnection?.disconnect();
+    this._jitsiConnection = null;
+    this.setState({
+      ...this.state,
+      tracks: []
+    });
+  };
+  _connMeet = async () => {
+    const options = config;
 
-    /**
-     * Overrides the parent method to inject {@link DimensionsDetector} as
-     * the top most component.
-     *
-     * @override
-     */
-    _createMainElement(component, props) {
-        return (
-            <JitsiThemePaperProvider>
-                <DimensionsDetector
-                    onDimensionsChanged = { this._onDimensionsChanged }>
-                    { super._createMainElement(component, props) }
-                </DimensionsDetector>
-            </JitsiThemePaperProvider>
-        );
-    }
+    JitsiMeetJS.init({
+      ...options
+    });
+    JitsiMeetJS.setLogLevel(JitsiMeetJS.logLevels.ERROR);
+    const roomName = this.state.roomName;
 
-    /**
-     * Attempts to disable the use of React Native
-     * {@link ExceptionsManager#handleException} on platforms and in
-     * configurations on/in which the use of the method in questions has been
-     * determined to be undesirable. For example, React Native will
-     * (intentionally) throw an unhandled {@code JavascriptException} for an
-     * unhandled JavaScript error in the Release configuration. This will
-     * effectively kill the app. In accord with the Web, do not kill the app.
-     *
-     * @private
-     * @returns {void}
-     */
-    _maybeDisableExceptionsManager() {
-        if (__DEV__) {
-            // As mentioned above, only the Release configuration was observed
-            // to suffer.
-            return;
+    options.bosh = `${options.bosh}?room=${roomName}`;
+    this._jitsiConnection = new JitsiMeetJS.JitsiConnection(
+      null,
+      null,
+      options
+    );
+    const conferenceEvents = JitsiMeetJS.events.conference;
+    debugger;
+    await new Promise((res, rej) => {
+      this._jitsiConnection.addEventListener(
+        JitsiConnectionEvents.CONNECTION_ESTABLISHED,
+        a => {
+          res(a);
         }
-        if (Platform.OS !== 'android') {
-            // A solution based on RTCSetFatalHandler was implemented on iOS and
-            // it is preferred because it is at a later step of the
-            // error/exception handling and it is specific to fatal
-            // errors/exceptions which were observed to kill the app. The
-            // solution implemented below was tested on Android only so it is
-            // considered safest to use it there only.
-            return;
-        }
+      );
+      this._jitsiConnection.addEventListener(
+        JitsiConnectionEvents.CONNECTION_FAILED,
+        a => {}
+      );
+      this._jitsiConnection.addEventListener(
+        JitsiConnectionEvents.CONNECTION_DISCONNECTED,
+        a => {}
+      );
+      this._jitsiConnection.connect({});
+    });
+    debugger;
+    this._jitsiConference = this._jitsiConnection.initJitsiConference(
+      roomName,
+      options
+    );
+    debugger;
+    this._jitsiConference.on(conferenceEvents.CONFERENCE_JOINED, () => {
+      // const { ExternalAPI } = NativeModules;
+      // debugger
+      // ExternalAPI.sendEvent(
+      //   'CONFERENCE_JOINED',
+      //   'url: "https://meet.jit.si/test_choi"',
+      //   this.externalAPIScope
+      // );
+    });
+    this._jitsiConference.on(conferenceEvents.CONFERENCE_FAILED, () => {});
+    this._jitsiConference.on(conferenceEvents.USER_JOINED, (id, user) => {
+      this._joinUser(user);
+    });
+    this._jitsiConference.on(conferenceEvents.TRACK_ADDED, (track, asd) => {
+      if (!track.isLocal()) {
+        this._addRemoteTrack(track);
+      }
+    });
+    debugger;
+    let video = (
+      await JitsiMeetJS.createLocalTracks({
+        devices: ['video'],
+        resolution: 320
+      })
+    )[0];
 
-        const oldHandler = global.ErrorUtils.getGlobalHandler();
-        const newHandler = _handleException;
+    // @@@ change this!
+    // let video = (
+    //   await JitsiMeetJS.createLocalTracks({
+    //     devices: ['desktop']
+    //   })
+    // )[0];
 
-        if (!oldHandler || oldHandler !== newHandler) {
-            newHandler.next = oldHandler;
-            global.ErrorUtils.setGlobalHandler(newHandler);
-        }
-    }
+    let audio = (
+      await JitsiMeetJS.createLocalTracks({
+        devices: ['audio'],
+        resolution: 320
+      })
+    )[0];
+    debugger;
+    this._jitsiConference.addTrack(video);
+    this._jitsiConference.addTrack(audio);
+    debugger;
+    this._jitsiConference.join();
+    this.setState({
+      ...this.state,
+      tracks: [{video, user: 'local'}]
+    });
+    debugger;
+  };
 
-    _onDimensionsChanged: (width: number, height: number) => void;
-
-    /**
-     * Updates the known available size for the app to occupy.
-     *
-     * @param {number} width - The component's current width.
-     * @param {number} height - The component's current height.
-     * @private
-     * @returns {void}
-     */
-    _onDimensionsChanged(width: number, height: number) {
-        const { dispatch } = this.state.store;
-
-        dispatch(clientResized(width, height));
-    }
-
-    /**
-     * Renders the platform specific dialog container.
-     *
-     * @returns {React$Element}
-     */
-    _renderDialogContainer() {
-        return (
-            <DialogContainer />
-        );
-    }
+  render() {
+    return (
+      <SafeAreaView style={{flex: 1}}>
+        <Button
+          title={'disconn'}
+          onPress={() => {
+            this._disconnMeet();
+          }}
+        />
+        <Button
+          title={'conn'}
+          onPress={() => {
+            this._connMeet();
+          }}
+        />
+        {this.state.tracks?.length ? (
+          this.state.tracks.map(track => {
+            return (
+              <RTCView
+                style={{
+                  zIndex: 99,
+                  flex: 1,
+                  top: 0,
+                  bottom: 0,
+                  left: 0,
+                  right: 0
+                }}
+                objectFit={'contain'}
+                streamURL={track.video.getOriginalStream().toURL()}
+                zOrder={1}
+              />
+            );
+          })
+        ) : (
+          <TextInput
+            style={{backgroundColor: '#fff'}}
+            onChangeText={() => {
+              this._changeRoomName();
+            }}
+          >
+            {this.state.roomName}
+          </TextInput>
+        )}
+      </SafeAreaView>
+    );
+  }
 }
 
-/**
- * Handles a (possibly unhandled) JavaScript error by preventing React Native
- * from converting a fatal error into an unhandled native exception which will
- * kill the app.
- *
- * @param {Error} error - The (possibly unhandled) JavaScript error to handle.
- * @param {boolean} fatal - If the specified error is fatal, {@code true};
- * otherwise, {@code false}.
- * @private
- * @returns {void}
- */
-function _handleException(error, fatal) {
-    if (fatal) {
-        // In the Release configuration, React Native will (intentionally) throw
-        // an unhandled JavascriptException for an unhandled JavaScript error.
-        // This will effectively kill the app. In accord with the Web, do not
-        // kill the app.
-        logger.error(error);
-    } else {
-        // Forward to the next globalHandler of ErrorUtils.
-        const { next } = _handleException;
-
-        typeof next === 'function' && next(error, fatal);
-    }
-}
+AppRegistry.registerComponent('App', () => App);
