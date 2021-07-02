@@ -182,19 +182,19 @@ export class App extends PureComponent {
       }
     });
     debugger;
-    let video = (
-      await JitsiMeetJS.createLocalTracks({
-        devices: ['video'],
-        resolution: 320
-      })
-    )[0];
-
-    // @@@ change this!
     // let video = (
     //   await JitsiMeetJS.createLocalTracks({
-    //     devices: ['desktop']
+    //     devices: ['video'],
+    //     resolution: 320
     //   })
     // )[0];
+
+    // @@@ change this!
+    let video = (
+      await JitsiMeetJS.createLocalTracks({
+        devices: ['desktop']
+      })
+    )[0];
 
     let audio = (
       await JitsiMeetJS.createLocalTracks({
