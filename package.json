@@ -153,12 +153,11 @@
   },
   "license": "Apache-2.0",
   "scripts": {
-    "lint": "eslint . && flow",
-    "lint-fix": "eslint --fix .",
     "postinstall": "patch-package && jetify",
-    "validate": "npm ls",
-    "start": "make dev",
-    "ios": "react-native run-ios",
-    "android": "react-native run-android"
+    "jetify": "jetify && cd ios && pod install && cd ..",
+    "ios": "sudo react-native run-ios",
+    "android": "sudo react-native run-android",
+    "set-android": "~/Library/Android/sdk/platform-tools/adb -s R59M905GC8X reverse tcp:8081 tcp:8081",
+    "get-android": "~/Library/Android/sdk/platform-tools/adb devices"
   }
 }
